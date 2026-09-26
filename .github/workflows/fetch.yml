@@ -1,0 +1,56 @@
+name: Fetch Lottery Data
+
+# 触发条件
+on:
+  # 定时触发（每天 22:30 北京时间 = 14:30 UTC）
+  schedule:
+    - cron: '30 14 * * *'
+  # 允许手动触发
+  workflow_dispatch:
+  # 当脚本或配置修改时也触发（首次保存时立即运行一次）
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      # 需要写权限才能提交数据
+      contents: write
+
+    steps:
+      # 1. 检出仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 设置 Python 环境
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. 安装依赖
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      # 4. 运行抓取脚本
+      - name: Fetch data
+        run: python scripts/fetch.py
+
+      # 5. 提交并推送数据
+      - name: Commit and push data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "没有数据变化，跳过提交"
+          else
+            git commit -m "更新开奖数据 $(date +'%Y-%m-%d %H:%M')"
+            git push
+          fi
