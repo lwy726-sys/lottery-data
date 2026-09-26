@@ -1,30 +1,37 @@
 name: Fetch Lottery Data
 
-# 触发条件
 on:
-  # 定时触发（每天 22:30 北京时间 = 14:30 UTC）
+  # 每天 22:30 北京时间（14:30 UTC）自动运行
   schedule:
     - cron: '30 14 * * *'
   # 允许手动触发
   workflow_dispatch:
-  # 当脚本或配置修改时也触发（首次保存时立即运行一次）
+  # 当抓取脚本或本文件变更时也触发一次
   push:
     branches: [main]
     paths:
-      - 'scripts/**'
-      - '.github/workflows/**'
+      - 'scripts/fetch.py'
+      - '.github/workflows/fetch.yml'
+
+# 并发控制：同一时间只运行一个，避免 git 冲突
+concurrency:
+  group: fetch-lottery-data
+  cancel-in-progress: false
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
+    # 最多运行 10 分钟，超时自动终止
+    timeout-minutes: 10
     permissions:
-      # 需要写权限才能提交数据
       contents: write
 
     steps:
-      # 1. 检出仓库代码
+      # 1. 检出仓库（完整历史，避免 push 时冲突）
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # 2. 设置 Python 环境
       - name: Setup Python
@@ -32,25 +39,43 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 3. 安装依赖
+      # 3. 安装依赖（锁定版本，避免未来不兼容）
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
+          pip install requests==2.32.3 beautifulsoup4==4.12.3
 
       # 4. 运行抓取脚本
       - name: Fetch data
         run: python scripts/fetch.py
 
-      # 5. 提交并推送数据
+      # 5. 检查 data 目录是否有内容
+      - name: Check data directory
+        id: check
+        run: |
+          if [ ! -d "data" ] || [ -z "$(ls -A data 2>/dev/null)" ]; then
+            echo "has_data=false" >> $GITHUB_OUTPUT
+            echo "⚠️ data 目录为空，跳过提交"
+          else
+            echo "has_data=true" >> $GITHUB_OUTPUT
+            echo "✅ 检测到数据文件："
+            ls -la data/
+          fi
+
+      # 6. 提交并推送数据
       - name: Commit and push data
+        if: steps.check.outputs.has_data == 'true'
+        env:
+          TZ: Asia/Shanghai
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
           if git diff --staged --quiet; then
             echo "没有数据变化，跳过提交"
           else
-            git commit -m "更新开奖数据 $(date +'%Y-%m-%d %H:%M')"
+            COMMIT_TIME=$(date +'%Y-%m-%d %H:%M')
+            git commit -m "更新开奖数据 ${COMMIT_TIME}"
             git push
+            echo "✅ 已推送更新：${COMMIT_TIME}"
           fi
